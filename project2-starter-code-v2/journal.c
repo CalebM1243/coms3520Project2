@@ -1,5 +1,8 @@
 #include <stdio.h>
 #include "journal.h"
+#include "buffer.h"
+#include <pthread.h>
+#include <semaphore.h>
 
 int is_write_data_complete;
 int is_journal_txb_complete;
@@ -9,76 +12,95 @@ int is_journal_txe_complete;
 int is_write_bitmap_complete;
 int is_write_inode_complete;
 
+/*
+Author: Caleb Moe
+Todo:
+Buffers
+Buffer Functions
+Threads
+*/
+
+static circbuf_t request_buf;       // buffer 1
+static circbuf_t journal_done_buf;  // buffer 2
+static circbuf_t commit_done_buf;   // buffer 3
+
+static pthread_t journal_metadata_thread_t; 
+static pthread_t journal_commit_thread_t;
+static pthread_t checkpoint_thread_t;
+
+static sem_t stage1_sem;
+static sem_t stage2_sem;
+static sem_t stage3_sem;
+
+//stage 1 thread
+static void *journal_metadata_thread(void *arg) {
+        while (1) {
+                int write_id = buffer_get(&request_buf);  // buffer_get blocks on empty
+
+                issue_write_data(write_id);
+                issue_journal_txb(write_id);
+                issue_journal_bitmap(write_id);
+                issue_journal_inode(write_id);
+
+                // wait until 4 completions have happened
+                for (int i = 0; i < 4; i++) {
+                        sem_wait(&stage1_sem);
+                }
+                buffer_put(&journal_done_buf, write_id); // buffer_put blocks on full
+        }
+}
+//stage 2 thread
+static void *journal_commit_thread(void *arg) {
+        while (1) {
+                int write_id = buffer_get(&journal_done_buf);  // buffer_get blocks on empty
+
+                issue_journal_txe(write_id);
+
+                // wait until completion completed
+                for (int i = 0; i < 1; i++) {
+                        sem_wait(&stage2_sem);
+                }
+                buffer_put(&commit_done_buf, write_id); // buffer_put blocks on full
+        }
+}
+//stage 3 thread
+static void *checkpoint_thread(void *arg) {
+        while (1) {
+                int write_id = buffer_get(&commit_done_buf);  // buffer_get blocks on empty
+
+                void issue_write_bitmap(write_id);
+                void issue_write_inode(write_id);
+
+                // wait until 2 completions completed
+                for (int i = 0; i < 1; i++) {
+                        sem_wait(&stage3_sem);
+                }
+                write_complete(write_id); //stage 3 done
+        }
+}
 /* This function can be used to initialize the buffers and threads.
  */
 void init_journal() {
-	// initialize buffers and threads here
+        //buffers
+        buffer_init(&request_buf); //stage 1
+        buffer_init(&journal_done_buf); //stage 2
+        buffer_init(&commit_done_buf); //stage 3
+        //semaphores
+        sem_init(&stage1_sem, 0, 0);
+        sem_init(&stage2_sem, 0, 0);
+        sem_init(&stage3_sem, 0, 0);
+
+        //threads
+        pthread_create(&journal_metadata_thread_t,   NULL, journal_metadata_thread, NULL);
+        pthread_create(&journal_commit_thread_t,     NULL, journal_commit_thread,   NULL);
+        pthread_create(&checkpoint_thread_t, NULL, checkpoint_thread,       NULL);
 }
 
-/* This function is called by the file system to request writing data to
- * persistent storage.
- *
- * This simple version does not correctly deal with concurrency. It issues
- * all writes in the correct order, but it assumes issued writes always
- * complete immediately and therefore, it doesn't wait for each phase 
- * to complete.
- */
-void request_write(int write_id) {
-
-        // write data and journal metadata
-        is_write_data_complete = 0;
-        is_journal_txb_complete = 0;
-        is_journal_bitmap_complete = 0;
-        is_journal_inode_complete = 0;
-        issue_write_data(write_id);
-        issue_journal_txb(write_id);
-        issue_journal_bitmap(write_id);
-        issue_journal_inode(write_id);
-
-        // normally we should wait here for the 4 issues to complete,
-        // but this simple implementation doesn’t have concurrency,
-        // so instead we will just call it an error if anything isn’t
-        // complete in this version of the code
-        if (!is_write_data_complete || !is_journal_txb_complete
-                || !is_journal_bitmap_complete
-                || !is_journal_inode_complete) {
-                printf("ERROR: writing data or journal failed!");
-                return;
-        }
-
-
-        // commit transaction by writing txe
-        is_journal_txe_complete = 0;
-        issue_journal_txe(write_id);
-
-        // normally we should wait here for the issue to complete,
-        // but this simple implementation doesn’t have concurrency,
-        // so instead we will just call it an error if it isn’t
-        // complete in this version of the code
-        if (!is_journal_txe_complete) {
-                printf("ERROR: writing txe to journal failed!");
-                return;
-        }
-
-        // checkpoint by writing metadata
-        is_write_bitmap_complete = 0;
-        is_write_inode_complete = 0;
-        issue_write_bitmap(write_id);
-        issue_write_inode(write_id);
-
-        // normally we should wait here for the 2 issues to complete,
-        // but this simple implementation doesn’t have concurrency,
-        // so instead we will just call it an error if anything isn’t
-        // complete in this version of the code
-        if (!is_write_bitmap_complete || !is_write_inode_complete) {
-                printf("ERROR: writing metadata failed!");
-                return;
-        }
-
-
-        // tell the file system that the write is complete
-        write_complete(write_id);
+//new request write simply adds request to request buffer
+void request_write(int write_id){
+        buffer_put(&request_buf, write_id);
 }
+
 
 /* This function is called by the block service when writing the txb block
  * to persistent storage is complete (e.g., it is physically written to 
@@ -86,29 +108,38 @@ void request_write(int write_id) {
  */
 void journal_txb_complete(int write_id) {
         is_journal_txb_complete = 1;
+        sem_post(&stage1_sem);
 }
 
 void journal_bitmap_complete(int write_id) {
         is_journal_bitmap_complete = 1;
+        sem_post(&stage1_sem);
 }
 
 void journal_inode_complete(int write_id) {
         is_journal_inode_complete = 1;
+        sem_post(&stage1_sem);
+
 }
 
 void write_data_complete(int write_id) {
         is_write_data_complete = 1;
+        sem_post(&stage1_sem);
 }
 
 void journal_txe_complete(int write_id) {
         is_journal_txe_complete = 1;
+        sem_post(&stage2_sem);
 }
 
 void write_bitmap_complete(int write_id) {
         is_write_bitmap_complete = 1;
+        sem_post(&stage3_sem);
+
 }
 
 void write_inode_complete(int write_id) {
         is_write_inode_complete = 1;
+        sem_post(&stage3_sem);
 }
 
