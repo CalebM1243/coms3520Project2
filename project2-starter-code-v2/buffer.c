@@ -1,5 +1,5 @@
 #include "buffer.h"
-
+#include <stdio.h>
 //initialize buffers
 void buffer_init(circbuf_t *b) {
         b->head  = 0;
