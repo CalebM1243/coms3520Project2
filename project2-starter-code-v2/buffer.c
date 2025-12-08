@@ -15,7 +15,8 @@ void buffer_put(circbuf_t *b, int write_id) {
 
         // wait while buffer is full
         while (b->count == BUFFER_SIZE) {
-                pthread_cond_wait(&b->not_full, &b->mtx);
+            printf("thread stuck because of full buffer\n");
+            pthread_cond_wait(&b->not_full, &b->mtx);
         }
 
         // insert at tail
@@ -34,7 +35,8 @@ int buffer_get(circbuf_t *b) {
 
         // wait while buffer is empty
         while (b->count == 0) {
-                pthread_cond_wait(&b->not_empty, &b->mtx);
+            printf("thread stuck because of empty buffer\n");
+            pthread_cond_wait(&b->not_empty, &b->mtx);
         }
 
         int write_id = b->buf[b->head];

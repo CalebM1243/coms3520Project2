@@ -3,7 +3,7 @@
 #include "buffer.h"
 #include <pthread.h>
 #include <semaphore.h>
-
+//keeping flags just in case i need them for debugging
 int is_write_data_complete;
 int is_journal_txb_complete;
 int is_journal_bitmap_complete;
@@ -48,6 +48,7 @@ static void *journal_metadata_thread(void *arg) {
                 }
                 buffer_put(&journal_done_buf, write_id); // buffer_put blocks on full
         }
+        return NULL;
 }
 //stage 2 thread
 static void *journal_commit_thread(void *arg) {
@@ -56,27 +57,27 @@ static void *journal_commit_thread(void *arg) {
 
                 issue_journal_txe(write_id);
 
-                // wait until completion completed
-                for (int i = 0; i < 1; i++) {
-                        sem_wait(&stage2_sem);
-                }
+                // wait until completion
+                sem_wait(&stage2_sem);
                 buffer_put(&commit_done_buf, write_id); // buffer_put blocks on full
         }
+        return NULL;
 }
 //stage 3 thread
 static void *checkpoint_thread(void *arg) {
         while (1) {
                 int write_id = buffer_get(&commit_done_buf);  // buffer_get blocks on empty
 
-                void issue_write_bitmap(write_id);
-                void issue_write_inode(write_id);
+                issue_write_bitmap(write_id);
+                issue_write_inode(write_id);
 
                 // wait until 2 completions completed
-                for (int i = 0; i < 1; i++) {
+                for (int i = 0; i < 2; i++) {
                         sem_wait(&stage3_sem);
                 }
                 write_complete(write_id); //stage 3 done
         }
+        return NULL;
 }
 /* This function can be used to initialize the buffers and threads.
  */
