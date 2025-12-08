@@ -27,6 +27,7 @@ void issue_write_data(int write_id) {
 static void *txe_worker(void *arg) {
     int write_id = (int)(long)arg;
     sleep(1);  
+	printf("Wait over \n");
     journal_txe_complete(write_id);
     return NULL;
 }

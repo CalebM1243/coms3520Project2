@@ -1,10 +1,11 @@
 #include "buffer.h"
 #include <stdio.h>
 //initialize buffers
-void buffer_init(circbuf_t *b) {
+void buffer_init(circbuf_t *b, const char *name) {
         b->head  = 0;
         b->tail  = 0;
         b->count = 0;
+        b->name  = name;
         pthread_mutex_init(&b->mtx, NULL);
         pthread_cond_init(&b->not_empty, NULL);
         pthread_cond_init(&b->not_full, NULL);
@@ -15,7 +16,7 @@ void buffer_put(circbuf_t *b, int write_id) {
 
         // wait while buffer is full
         while (b->count == BUFFER_SIZE) {
-            printf("thread stuck because of full buffer\n");
+            printf("thread stuck because of full %s buffer\n", b->name);
             pthread_cond_wait(&b->not_full, &b->mtx);
         }
 
@@ -35,7 +36,6 @@ int buffer_get(circbuf_t *b) {
 
         // wait while buffer is empty
         while (b->count == 0) {
-            printf("thread stuck because of empty buffer\n");
             pthread_cond_wait(&b->not_empty, &b->mtx);
         }
 

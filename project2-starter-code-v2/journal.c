@@ -3,14 +3,7 @@
 #include "buffer.h"
 #include <pthread.h>
 #include <semaphore.h>
-//keeping flags just in case i need them for debugging
-int is_write_data_complete;
-int is_journal_txb_complete;
-int is_journal_bitmap_complete;
-int is_journal_inode_complete;
-int is_journal_txe_complete;
-int is_write_bitmap_complete;
-int is_write_inode_complete;
+
 
 /*
 Author: Caleb Moe
@@ -18,6 +11,7 @@ Todo:
 Buffers
 Buffer Functions
 Threads
+Thread Functions
 */
 
 static circbuf_t request_buf;       // buffer 1
@@ -83,9 +77,9 @@ static void *checkpoint_thread(void *arg) {
  */
 void init_journal() {
         //buffers
-        buffer_init(&request_buf); //stage 1
-        buffer_init(&journal_done_buf); //stage 2
-        buffer_init(&commit_done_buf); //stage 3
+        buffer_init(&request_buf, "request_buf"); //stage 1
+        buffer_init(&journal_done_buf, "journal_done_buf"); //stage 2
+        buffer_init(&commit_done_buf, "commit_done_buf"); //stage 3
         //semaphores
         sem_init(&stage1_sem, 0, 0);
         sem_init(&stage2_sem, 0, 0);
@@ -102,45 +96,32 @@ void request_write(int write_id){
         buffer_put(&request_buf, write_id);
 }
 
-
-/* This function is called by the block service when writing the txb block
- * to persistent storage is complete (e.g., it is physically written to 
- * disk).
- */
 void journal_txb_complete(int write_id) {
-        is_journal_txb_complete = 1;
         sem_post(&stage1_sem);
 }
 
 void journal_bitmap_complete(int write_id) {
-        is_journal_bitmap_complete = 1;
         sem_post(&stage1_sem);
 }
 
 void journal_inode_complete(int write_id) {
-        is_journal_inode_complete = 1;
         sem_post(&stage1_sem);
-
 }
 
 void write_data_complete(int write_id) {
-        is_write_data_complete = 1;
         sem_post(&stage1_sem);
 }
 
 void journal_txe_complete(int write_id) {
-        is_journal_txe_complete = 1;
         sem_post(&stage2_sem);
 }
 
 void write_bitmap_complete(int write_id) {
-        is_write_bitmap_complete = 1;
         sem_post(&stage3_sem);
 
 }
 
 void write_inode_complete(int write_id) {
-        is_write_inode_complete = 1;
         sem_post(&stage3_sem);
 }
 
